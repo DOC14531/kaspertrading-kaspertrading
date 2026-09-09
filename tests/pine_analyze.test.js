@@ -155,6 +155,16 @@ array.set(a, 10, 99.0)`);
     assert.ok(diags[0].message.includes('array.set'));
   });
 
+  it('array.set negative index', () => {
+    const diags = analyze(`//@version=6
+indicator("Test")
+a = array.new_float(3)
+array.set(a, -1, 99.0)`);
+    assert.equal(diags.length, 1);
+    assert.equal(diags[0].severity, 'error');
+    assert.ok(diags[0].message.includes('array.set'));
+  });
+
   it('array.get valid index — no issue', () => {
     const diags = analyze(`//@version=6
 indicator("Test")
