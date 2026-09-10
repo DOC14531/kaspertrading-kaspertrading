@@ -17,8 +17,22 @@ Ce skill a besoin, pour le ticker et la séance demandés :
 - Barres OHLCV intraday (1min ou 5min idéalement) pour VWAP et Volume Profile
 - Idéalement bid/ask volume ou trades signés (aggressor side) pour le delta order flow — sans cette donnée, sauter cette famille de signal et le dire explicitement à l'utilisateur (ne jamais l'inventer)
 
-Sources recommandées (voir `references/data-sources.md` pour le détail) :
-- **Interactive Brokers TWS API** — L1/L2 gratuit avec compte financé, meilleure option si delta order flow est voulu
+### Source prioritaire : le chart TradingView déjà ouvert (MCP local, CDP :9222)
+
+Ce projet contrôle un chart TradingView Desktop en direct — c'est la source à utiliser en premier, sans demander à l'utilisateur d'exporter quoi que ce soit :
+
+1. `chart_get_state` — vérifier que le symbole/timeframe correspondent à la demande (basculer en "1" ou "5" via `chart_set_timeframe` si le chart est sur un autre timeframe ; `chart_set_symbol` si le ticker diffère)
+2. `data_get_ohlcv` avec `count: 90` à `500` (pas de `summary: true` — ce skill a besoin des barres brutes, pas d'un résumé) pour récupérer les bougies de la séance
+3. `quote_get` — prix courant, pour contextualiser le résultat par rapport au dernier print
+4. Sauvegarder la sortie de `data_get_ohlcv` dans un fichier `.json` temporaire, puis lancer `scripts/analyze_intraday.py` dessus (le script accepte directement ce JSON — voir l'en-tête du script pour le format exact)
+5. Optionnel : `capture_screenshot` pour une confirmation visuelle des zones de confluence identifiées
+
+Limite connue : `data_get_ohlcv` ne fournit pas de volume acheteur/vendeur signé (`buy_volume`/`sell_volume`) — le delta order flow sera donc calculé en approximation tick rule à partir de cette source. Le script le signale explicitement à chaque fois. Si l'utilisateur veut un vrai delta, passer par IBKR TWS (voir ci-dessous).
+
+### Sources alternatives (pas de chart TradingView disponible, ou vrai delta order flow requis)
+
+Voir `references/data-sources.md` pour le détail :
+- **Interactive Brokers TWS API** — L1/L2 gratuit avec compte financé, seule option pour un delta order flow réel (buy_volume/sell_volume signés)
 - **Polygon.io** — REST/WebSocket, bon fallback si pas de compte IBKR
 - **Alpaca** — gratuit, correct pour prototyper VWAP + Volume Profile (attention : barres agrégées côté serveur, delta non fiable)
 

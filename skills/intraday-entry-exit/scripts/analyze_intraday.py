@@ -5,11 +5,19 @@ confluence Fibonacci, régime de marché (ATR), et stop suggéré.
 
 Usage:
     python analyze_intraday.py chemin_vers_fichier.csv
+    python analyze_intraday.py chemin_vers_fichier.json
 
 Format CSV attendu (colonnes, ordre libre, insensible à la casse) :
     timestamp, open, high, low, close, volume
 Colonnes optionnelles (pour le delta order flow) :
     buy_volume, sell_volume
+
+Format JSON attendu (pour brancher directement la sortie de l'outil MCP
+TradingView `data_get_ohlcv`) : une liste d'objets, ou un objet avec une clé
+"bars"/"data" contenant cette liste. Chaque objet doit avoir open/high/low/
+close/volume (insensible à la casse ; "time" ou "timestamp" acceptés,
+optionnels — non utilisés dans les calculs). Colonnes optionnelles identiques
+au CSV pour le delta order flow : buy_volume, sell_volume.
 
 Si buy_volume/sell_volume absentes, le script utilise la tick rule
 (approximation : hausse de close => volume classé acheteur, baisse => vendeur)
@@ -18,32 +26,67 @@ et le signale clairement comme une approximation, jamais comme une vraie mesure.
 
 import sys
 import csv
+import json
 import statistics
 from pathlib import Path
 
 
-def load_bars(path):
+def _bar_from_dict(row):
+    cols = {k.lower(): k for k in row}
+    required = ["open", "high", "low", "close", "volume"]
+    missing = [c for c in required if c not in cols]
+    if missing:
+        raise ValueError(f"Champs manquants dans une barre: {missing}")
+    bar = {
+        "open": float(row[cols["open"]]),
+        "high": float(row[cols["high"]]),
+        "low": float(row[cols["low"]]),
+        "close": float(row[cols["close"]]),
+        "volume": float(row[cols["volume"]]),
+    }
+    has_delta = "buy_volume" in cols and "sell_volume" in cols
+    if has_delta:
+        bar["buy_volume"] = float(row[cols["buy_volume"]])
+        bar["sell_volume"] = float(row[cols["sell_volume"]])
+    return bar, has_delta
+
+
+def load_bars_csv(path):
     with open(path, newline="") as f:
         reader = csv.DictReader(f)
-        cols = {c.lower(): c for c in reader.fieldnames}
-        required = ["open", "high", "low", "close", "volume"]
-        missing = [c for c in required if c not in cols]
-        if missing:
-            raise ValueError(f"Colonnes manquantes dans le CSV: {missing}")
         bars = []
+        has_delta = False
         for row in reader:
-            bar = {
-                "open": float(row[cols["open"]]),
-                "high": float(row[cols["high"]]),
-                "low": float(row[cols["low"]]),
-                "close": float(row[cols["close"]]),
-                "volume": float(row[cols["volume"]]),
-            }
-            if "buy_volume" in cols and "sell_volume" in cols:
-                bar["buy_volume"] = float(row[cols["buy_volume"]])
-                bar["sell_volume"] = float(row[cols["sell_volume"]])
+            bar, row_has_delta = _bar_from_dict(row)
+            has_delta = has_delta or row_has_delta
             bars.append(bar)
-        return bars, ("buy_volume" in cols and "sell_volume" in cols)
+        return bars, has_delta
+
+
+def load_bars_json(path):
+    with open(path) as f:
+        payload = json.load(f)
+    if isinstance(payload, dict):
+        for key in ("bars", "data", "result", "ohlcv"):
+            if key in payload and isinstance(payload[key], list):
+                payload = payload[key]
+                break
+    if not isinstance(payload, list):
+        raise ValueError("JSON attendu: une liste de barres OHLCV (ou un objet contenant une clé 'bars'/'data')")
+    bars = []
+    has_delta = False
+    for row in payload:
+        bar, row_has_delta = _bar_from_dict(row)
+        has_delta = has_delta or row_has_delta
+        bars.append(bar)
+    return bars, has_delta
+
+
+def load_bars(path):
+    path = Path(path)
+    if path.suffix.lower() == ".json":
+        return load_bars_json(path)
+    return load_bars_csv(path)
 
 
 def compute_vwap(bars):
@@ -235,7 +278,7 @@ def main():
 
     print("=== DELTA ORDER FLOW ===")
     if delta_data["is_approximation"]:
-        print("ATTENTION : buy_volume/sell_volume absents du CSV.")
+        print("ATTENTION : buy_volume/sell_volume absents des données fournies.")
         print("Delta approximé via tick rule (close vs close précédent) — PAS une vraie mesure d'agresseur.")
     print(f"Delta: {delta_data['delta']:.2f} (buy: {delta_data['buy_volume']:.2f} / sell: {delta_data['sell_volume']:.2f})")
     print()
